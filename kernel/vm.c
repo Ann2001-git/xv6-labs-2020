@@ -499,22 +499,35 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 #endif
 }
 
-static void
-pteprint(pagetable_t pagetable, int depth){
+// static void
+// pteprint(pagetable_t pagetable, int depth){
+//   for(int i = 0; i < 512; i++){
+//     pte_t pte = pagetable[i];
+//     if(pte & PTE_V){
+//       uint64 child = PTE2PA(pte);
+//       for(int j = 0; j < depth; j++)
+//         printf(" ..");
+//       printf("%d: pte %p pa %p\n", i, pte, child);
+//       if((pte & (PTE_R | PTE_W | PTE_X)) == 0)
+//         pteprint((pagetable_t)child,depth+1);
+//     }
+//   }
+// }
+
+void vmprint(pagetable_t pagetable,int depth){
+ if(depth == 0) printf("page table %p",pagetable);
+ if(depth>2) return;
   for(int i = 0; i < 512; i++){
     pte_t pte = pagetable[i];
-    if(pte & PTE_V){
-      uint64 child = PTE2PA(pte);
-      for(int j = 0; j < depth; j++)
+    if((pte & PTE_V) != 0){ 
+      printf(" ..");
+      for(int j = 0;j<depth;j++){
         printf(" ..");
-      printf("%d: pte %p pa %p\n", i, pte, child);
-      if((pte & (PTE_R | PTE_W | PTE_X)) == 0)
-        pteprint((pagetable_t)child,depth+1);
+      }
+      uint64 child = PTE2PA(pte);
+      printf("%d: pte %p pa %p\n",i,pte,child);
+       
+      vmprint((pagetable_t)child,depth+1); 
     }
   }
-}
-
-void vmprint(pagetable_t pagetable){
-  printf("page table %p\n", pagetable);
-  pteprint(pagetable, 1);
 }
