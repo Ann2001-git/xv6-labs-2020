@@ -111,17 +111,18 @@ sys_trace(void){
 
 uint64
 sys_sysinfo(void){
-  uint64 si_addr;
-  struct sysinfo si;
-  struct proc* p = myproc();
+  
+  struct sysinfo info;
+  uint64 addr; 
+  struct proc *p = myproc();
+ 
+  info.freemem = acquire_freemem();
+  info.nproc = acquire_nproc();
 
-  if(argaddr(0, &si_addr) < 0) return -1;
-
-  si.freemem = frmcnt();
-  si.nproc = proccnt();
-
-  if(copyout(p->pagetable, si_addr, (char*)&si, sizeof(struct sysinfo)) < 0)
-    return -1;
+  if(argaddr(0, &addr) < 0)  
+  return -1;
+  if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+  return -1;
 
   return 0;
 }    

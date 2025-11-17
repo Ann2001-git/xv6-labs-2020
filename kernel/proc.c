@@ -128,7 +128,7 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
-  p->trace_mask = 0;
+  p->trace_mask = 0;  //创建新进程的时候，trace_mask 设置为默认值0
 
   return p;
 }
@@ -700,7 +700,7 @@ procdump(void)
 }
 
 uint64
-proccnt(){
+acquire_nproc(){
   struct proc *p;
   uint64 cnt = 0;
 
