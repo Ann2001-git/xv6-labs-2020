@@ -17,40 +17,57 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+
+void
+kvm_map_pgtbl(pagetable_t pgtbl)
+{//// 将各种内核需要的 direct mapping 添加到页表 pgtbl 中
+
+  // uart registers
+  kvmmap(pgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  kvmmap(pgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // // CLINT
+  // kvmmap(pgtbl, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  //这个CLINT用来存储发生时钟中断时的一些额外信息，由于存取这些信息的过程都发生在机器态，不受页表控制，所以这个区域无需映射
+  //memlayout.h中CLINT对应的常数是0x2000000，比0xC000000小，按照文档的指示是可以被用户区覆盖的，所以没有映射（映射了可能后面再映射用户内存会报remap错误)。遇到过！！
+  //参考https://www.cnblogs.com/YuanZiming/p/14219005.html
+
+  // PLIC
+  kvmmap(pgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  kvmmap(pgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  kvmmap(pgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  kvmmap(pgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+}
+
 /*
  * create a direct-map page table for the kernel.
  */
 pagetable_t
-kvmcreate()
+kvminit_newpgtbl() 
 {
-  pagetable_t pagetable = (pagetable_t) kalloc();
-  memset(pagetable, 0, PGSIZE);
+  pagetable_t pgtbl = (pagetable_t) kalloc();
+  memset(pgtbl, 0, PGSIZE);
+  
+  kvm_map_pgtbl(pgtbl); 
 
-  // uart registers
-  kvmmap(pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
-  // virtio mmio disk interface
-  kvmmap(pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // PLIC
-  kvmmap(pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
-
-  // map kernel text executable and read-only.
-  kvmmap(pagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
-
-  // map kernel data and the physical RAM we'll make use of.
-  kvmmap(pagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
-
-  // map the trampoline for trap entry/exit to
-  // the highest virtual address in the kernel.
-  kvmmap(pagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
-
-  return pagetable;
+  return pgtbl;
 }
 
-void kvminit(){
-  kernel_pagetable = kvmcreate();
-  // CLINT
+void
+kvminit()
+{
+  kernel_pagetable = kvminit_newpgtbl(); 
+  //CLINT 在这
   kvmmap(kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
 }
 
@@ -121,6 +138,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // add a mapping to the kernel page table.
 // only used when booting.
 // does not flush TLB or enable paging.
+//增加第一个参数，使之可处理所有页表
 void
 kvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
 {
@@ -132,15 +150,16 @@ kvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
 // a physical address. only needed for
 // addresses on the stack.
 // assumes va is page aligned.
+//添加第一个参数，使之可以处理所有类型进程的页表
 uint64
-kvmpa(uint64 va)
+kvmpa(pagetable_t pagetable,uint64 va)
 {
   uint64 off = va % PGSIZE;
   pte_t *pte;
   uint64 pa;
-  struct proc* p = myproc();
-  
-  pte = walk(p->kernel_pagetable, va, 0);
+  //struct proc* p = myproc(); 
+  pte = walk(pagetable, va, 0);
+  //pte = walk(p->kernel_pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -206,6 +225,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       return -1;
     if(*pte & PTE_V){
       printf("%p\n", PTE2PA(*pte));
+      printf("remap panic: va=%p pa=%p *pte=%p\n", (void*)a, (void*)pa, (void*)*pte);
       panic("remap");}
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
@@ -411,8 +431,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
-    if(n > len)
-      n = len;
+    if(n > len)  //取剩余空间和剩余长度的较小值
+      n = len; 
     memmove((void *)(pa0 + (dstva - va0)), src, n);
 
     len -= n;
@@ -499,20 +519,6 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 #endif
 }
 
-// static void
-// pteprint(pagetable_t pagetable, int depth){
-//   for(int i = 0; i < 512; i++){
-//     pte_t pte = pagetable[i];
-//     if(pte & PTE_V){
-//       uint64 child = PTE2PA(pte);
-//       for(int j = 0; j < depth; j++)
-//         printf(" ..");
-//       printf("%d: pte %p pa %p\n", i, pte, child);
-//       if((pte & (PTE_R | PTE_W | PTE_X)) == 0)
-//         pteprint((pagetable_t)child,depth+1);
-//     }
-//   }
-// }
 
 void vmprint(pagetable_t pagetable,int depth){
  if(depth == 0) printf("page table %p",pagetable);
@@ -530,4 +536,18 @@ void vmprint(pagetable_t pagetable,int depth){
       vmprint((pagetable_t)child,depth+1); 
     }
   }
+}
+
+void
+kvm_free_kernelpgtbl(pagetable_t pagetable){
+  for (int i = 0;i < 512;++i) {
+        pte_t pte = pagetable[i];
+        uint64 child = PTE2PA(pte);
+        if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {      // 如果该页表项指向更低一级的页表
+            kvm_free_kernelpgtbl((pagetable_t)child);                     // 递归释放低一级页表及其页表项
+            pagetable[i] = 0;
+        }
+    }
+    kfree((void*)pagetable);        // 释放当前级别页表所占用空间
+
 }
