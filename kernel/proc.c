@@ -269,7 +269,10 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
-  kvmcopy(p->pagetable, p->kernel_pagetable, 0, p->sz);
+
+  // 首个用户空间进程，将用户空间页表映射到内核页表
+  if (kvmcopy(p->pagetable, p->kernel_pagetable, 0, PGSIZE) < 0)
+      panic("userinit: kvmcopy");
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -292,15 +295,24 @@ growproc(int n)
   struct proc *p = myproc();
 
   sz = p->sz;
+  
+  // 检查是否会超过 PLIC 的地址
+  if(n > 0 && sz + n >= PLIC)  return -1;
+
+  uint oldsz = sz;
+
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
-    if(kvmcopy(p->pagetable, p->kernel_pagetable, p->sz, p->sz + n) != 0)
+    // n>0，申请增加内存，我们这里在等扩容成功以后，把新增加的内存映射到用户内核页表
+    if(kvmcopy(p->pagetable, p->kernel_pagetable, oldsz, sz) != 0)
       return -1;
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
-    kvmdealloc(p->kernel_pagetable, p->sz, p->sz+n);
+    //kvmdealloc(p->kernel_pagetable, p->sz, p->sz+n);
+    // 同上，释放内存以后同步映射
+    uvmunmap(p->kernel_pagetable, PGROUNDUP(sz), (PGROUNDUP(oldsz) - PGROUNDUP(sz)) / PGSIZE, 0);
   }
   p->sz = sz;
   return 0;
@@ -325,14 +337,16 @@ fork(void)
     freeproc(np);
     release(&np->lock);
     return -1;
-  }
+  }// uvmcopy() 已经将父进程的页表和物理内存都复制到新的子进程
 
-  if(kvmcopy(np->pagetable, np->kernel_pagetable, 0, p->sz) < 0){
+ 
+  np->sz = p->sz;
+   // 这里需要把新的子进程的页表，复制到用户的内核页表
+  if(kvmcopy(np->pagetable, np->kernel_pagetable, 0, np->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
   }
-  np->sz = p->sz;
 
   np->parent = p;
 
@@ -537,7 +551,7 @@ scheduler(void)
         w_satp(MAKE_SATP(p->kernel_pagetable));
         sfence_vma();  //// 清除缓存，刷新TLB缓存，以确保地址转换表的更改生效
 
-        //调度，执行进程
+        //调度，执行进程,内核开始用 p->kstack
         swtch(&c->context, &p->context);
         
         //切换回全局内核

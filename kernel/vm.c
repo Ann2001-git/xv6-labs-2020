@@ -182,11 +182,14 @@ kvmcopy(pagetable_t old, pagetable_t new, uint64 start, uint64 end){
   start = PGROUNDUP(start);
 
   for(i = start; i < end; i+= PGSIZE){
-    if((pte = walk(old, i, 0)) == 0) panic ("kvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0) panic("kvmcopy: page not present");
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte) & (~PTE_U);
-    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0) goto err;
+    if((pte = walk(old, i, 0)) == 0) 
+        panic ("kvmcopy: pte should exist");
+    if((*pte & PTE_V) == 0) 
+        panic("kvmcopy: page not present");
+    pa = PTE2PA(*pte);  //从老页表 old 里取物理地址
+    flags = PTE_FLAGS(*pte) & (~PTE_U);//取 flags，并去掉 PTE_U,浅拷贝
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0)  // 用同一个 pa 在 new 页表里建映射 —— 浅拷贝的关键
+         goto err;
   }
 
   return 0;
@@ -521,7 +524,7 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 
 
 void vmprint(pagetable_t pagetable,int depth){
- if(depth == 0) printf("page table %p",pagetable);
+ if(depth == 0) printf("page table %p\n",pagetable);
  if(depth>2) return;
   for(int i = 0; i < 512; i++){
     pte_t pte = pagetable[i];

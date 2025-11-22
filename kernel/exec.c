@@ -107,12 +107,16 @@ exec(char *path, char **argv)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
+  
+  // 先取消旧的映射内容
+  // kvmdealloc(p->kernel_pagetable, p->sz, 0);
+   uvmunmap(p->kernel_pagetable, 0, PGROUNDUP(oldsz) / PGSIZE, 0);
+  // 将新的用户空间的页表内容拷贝到内核页表中
+  if(kvmcopy(pagetable, p->kernel_pagetable, 0, sz) < 0) goto bad;
     
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
-  kvmdealloc(p->kernel_pagetable, p->sz, 0);
-  if(kvmcopy(p->pagetable, p->kernel_pagetable, 0, sz) < 0) goto bad;
   p->sz = sz;
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
