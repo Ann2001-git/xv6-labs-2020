@@ -226,7 +226,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V){
+    if(*pte & PTE_V){  //已经被映射到了某个物理地址
       printf("%p\n", PTE2PA(*pte));
       printf("remap panic: va=%p pa=%p *pte=%p\n", (void*)a, (void*)pa, (void*)*pte);
       panic("remap");}
