@@ -135,15 +135,18 @@ printfinit(void)
 }
 
 void
-backtrace(void){
-  uint64 fp, top;
+backtrace(){
 
-  fp = r_fp();
-  top = PGROUNDUP(fp);
-  
-  printf("backtrace\n");
-  while(fp < top){
-    printf("%p\n", *((uint64*)(fp-8)));
-    fp = *((uint64*)(fp - 16));
+  printf("backtrace:\n");
+  uint64 fp = r_fp();
+  uint64 * frame = (uint64 *) fp;  //8字节
+
+  uint64 up = PGROUNDUP(fp);
+  uint64 down = PGROUNDDOWN(fp);
+
+  while(fp < up && fp > down){
+    printf("%p\n", frame[-1]);
+    fp = frame[-2];
+    frame = (uint64 *) fp;
   }
 }
