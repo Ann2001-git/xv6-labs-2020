@@ -182,9 +182,11 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0) continue;
+    if((pte = walk(pagetable, a, 0)) == 0) 
+      continue;  //惰性分配
       // panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0) continue;
+    if((*pte & PTE_V) == 0) 
+      continue;  //惰性分配
       // panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
@@ -333,9 +335,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walk(old, i, 0)) == 0) continue;
+    if((pte = walk(old, i, 0)) == 0) 
+      continue;  //fork()调用
       // panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0) continue;
+    if((*pte & PTE_V) == 0) 
+      continue;  //fork()调用
       // panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
@@ -374,15 +378,19 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
-  struct proc* p = myproc();
+  //struct proc* p = myproc();
+  if(is_lazy_alloc_va(dstva)) {
+    lazy_alloc(dstva);
+  }
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0){
-      if(va0 >= p->sz || va0 < p->trapframe->sp) return -1;
-      if(uvmallocpage(pagetable, va0) != 0) return -1;
-      else pa0 = walkaddr(pagetable, va0);
+      return -1;
+      // if(va0 >= p->sz || va0 < p->trapframe->sp) return -1;
+      // if(uvmallocpage(pagetable, va0) != 0) return -1;
+      // else pa0 = walkaddr(pagetable, va0);
     }
     n = PGSIZE - (dstva - va0);
     if(n > len)
@@ -403,15 +411,16 @@ int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
-  struct proc* p = myproc();
+  if(is_lazy_alloc_va(srcva)) {
+    lazy_alloc(srcva);
+  }
+  //struct proc* p = myproc();
 
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0){
-      if(va0 >= p->sz || va0 < p->trapframe->sp) return -1;
-      if(uvmallocpage(pagetable, va0) != 0) return -1;
-      else pa0 = walkaddr(pagetable, va0);
+      return -1;
     }
     n = PGSIZE - (srcva - va0);
     if(n > len)
@@ -434,15 +443,16 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
   uint64 n, va0, pa0;
   int got_null = 0;
-  struct proc *p = myproc();
+  //struct proc *p = myproc();
 
   while(got_null == 0 && max > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0){
-      if(va0 >= p->sz || va0 < p->trapframe->sp) return -1;
-      if(uvmallocpage(pagetable, va0) != 0) return -1;
-      else pa0 = walkaddr(pagetable, va0);
+      // if(va0 >= p->sz || va0 < p->trapframe->sp) return -1;
+      // if(uvmallocpage(pagetable, va0) != 0) return -1;
+      // else pa0 = walkaddr(pagetable, va0);
+      return -1;
     }
     n = PGSIZE - (srcva - va0);
     if(n > max)
@@ -469,5 +479,34 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+int 
+is_lazy_alloc_va(uint64 va){
+  pte_t* pte;
+  struct proc *p = myproc();
+  if(va < p->sz                      //确保地址在进程的内存大小范围内
+     && PGROUNDDOWN(va) != r_sp()    //确保地址不在 guard page 中
+     && (((pte = walk(p->pagetable, va, 0)) == 0) || ((*pte & PTE_V) == 0))//确保页表确实不存在
+    ){
+      return 1;
+  }
+  return 0;
+}
+void 
+lazy_alloc(uint64 va){
+  va = PGROUNDDOWN(va);
+  struct proc*p = myproc();
+  char* pa = kalloc();
+  if(pa == 0) {
+    p->killed = 1;
+  }
+  else{
+    memset(pa,0,PGSIZE);
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)pa, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+       kfree(pa);
+       p->killed = 1;
+      }
   }
 }

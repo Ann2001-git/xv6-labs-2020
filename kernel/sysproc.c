@@ -48,13 +48,18 @@ sys_sbrk(void)
   if(argint(0, &n) < 0)
     return -1;
   addr = p->sz;
-  if(n < 0){
-    p->sz = uvmdealloc(p->pagetable, p->sz, p->sz + n);
-  }else{
-    p->sz += (uint64)n;
-  }
+ 
   // if(growproc(n) < 0)
   //   return -1;
+
+  if(n > 0){
+    p->sz += n;
+  }else if(p->sz + n >0){
+    p->sz = uvmdealloc(p->pagetable, p->sz, p->sz + n); //参数为负，但可以分配
+  }else{
+    return -1;
+  }
+
   return addr;
 }
 
